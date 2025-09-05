@@ -1,0 +1,48 @@
+{
+  "invalid_log_data": [
+    {
+      "timestamp": "2024-11-08T14:23:30",
+      "request_id": "qwerty123",
+      "message": "User authentication failed",
+      "data": {
+        "user_id": "hamza",
+        "": "192.168.1.1"
+      }
+    }
+  ],
+  "logs": [
+    {
+      "timestamp": "2024-11-08T14:23:30",
+      "level": "CRITICAL",
+      "service": "auth",
+      "request_id": "qwerty123",
+      "message": "User authentication failed",
+      "data": {
+        "user_id": "hamza",
+        "ip_address": "192.168.1.1"
+      }
+    },
+    {
+      "timestamp": "2024-11-08T15:10:45",
+      "level": "WARNING",
+      "service": "database",
+      "request_id": "asdfgh456",
+      "message": "Database connection is slow",
+      "data": {
+        "user_id": "aryan",
+        "ip_address": "192.168.1.2"
+      }
+    },
+    {
+      "timestamp": "2024-11-08T16:00:12",
+      "level": "INFO",
+      "service": "payment",
+      "request_id": "zxcvbn789",
+      "message": "Payment processed successfully",
+      "data": {
+        "user_id": "smith",
+        "ip_address": "192.168.1.3"
+      }
+    }
+  ]
+}
