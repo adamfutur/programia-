@@ -57,7 +57,7 @@ The Mini Coding Agent is designed with modularity and extensibility in mind. Its
 Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/mini-coding-agent.git
+git clone https://github.com/adamfutur/programia.git
 cd mini-coding-agent
 ```
 
