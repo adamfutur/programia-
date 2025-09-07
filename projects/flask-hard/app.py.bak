@@ -1,0 +1,60 @@
+from flask import Flask, request, jsonify, abort
+from log_processor import LogProcessor
+
+app = Flask(__name__)
+
+# Initialize the LogProcessor singleton
+log_processor = LogProcessor()
+
+
+@app.route('/logs', methods=['POST'])
+def add_log():
+    if not request.is_json:
+        return jsonify({'error': 'Request must be JSON'}), 400
+
+    log_entry = request.get_json()
+
+    # Basic validation of required fields
+    required_fields = ['timestamp', 'level', 'message']
+    for field in required_fields:
+        if field not in log_entry:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+
+    # Validate level
+    allowed_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+    if log_entry['level'] not in allowed_levels:
+        return jsonify({'error': f'Invalid log level: {log_entry["level"]}'}), 400
+
+    # Enqueue the log for processing
+    try:
+        log_processor.enqueue_log(log_entry)
+    except Exception as e:
+        return jsonify({'error': f'Failed to enqueue log: {str(e)}'}), 500
+
+    return jsonify({'message': 'Log accepted'}), 201
+
+
+@app.route('/logs', methods=['GET'])
+def get_logs():
+    level = request.args.get('level')
+    allowed_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+
+    if level and level not in allowed_levels:
+        return jsonify({'error': f'Invalid level filter: {level}'}), 400
+
+    logs = log_processor.get_logs(level_filter=level)
+
+    # Sort logs by timestamp ascending
+    logs_sorted = sorted(logs, key=lambda x: x.get('timestamp', ''))
+
+    return jsonify(logs_sorted), 200
+
+
+@app.route('/metrics', methods=['GET'])
+def get_metrics():
+    metrics = log_processor.get_metrics()
+    return jsonify(metrics), 200
+
+
+if __name__ == '__main__':
+    app.run(debug=True)

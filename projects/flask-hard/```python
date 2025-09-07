@@ -1,0 +1,64 @@
+# projects/flask-hard/app/log_processor.py
+from datetime import datetime
+from typing import Dict, Any
+import json
+
+ALLOWED_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+class ValidationError(Exception):
+    pass
+
+
+def parse_log(json_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Parse and validate a log entry from JSON data.
+
+    Args:
+        json_data: dict parsed from JSON payload.
+
+    Returns:
+        dict with validated and parsed log fields.
+
+    Raises:
+        ValidationError: if validation fails.
+    """
+    required_fields = ["timestamp", "level", "service", "message"]
+
+    for field in required_fields:
+        if field not in json_data:
+            raise ValidationError(f"Missing required field: {field}")
+
+    # Validate timestamp
+    timestamp_str = json_data["timestamp"]
+    try:
+        # fromisoformat supports ISO 8601 but not all variants, fallback to dateutil if needed
+        timestamp = datetime.fromisoformat(timestamp_str)
+    except Exception:
+        raise ValidationError("Invalid timestamp format, must be ISO 8601 string")
+
+    # Validate level
+    level = json_data["level"]
+    if level not in ALLOWED_LEVELS:
+        raise ValidationError(f"Invalid level '{level}', must be one of {sorted(ALLOWED_LEVELS)}")
+
+    # Validate service
+    service = json_data["service"]
+    if not isinstance(service, str) or not service.strip():
+        raise ValidationError("Field 'service' must be a non-empty string")
+
+    # Validate message
+    message = json_data["message"]
+    if not isinstance(message, str) or not message.strip():
+        raise ValidationError("Field 'message' must be a non-empty string")
+
+    # Optional fields: include any other fields as-is
+    optional_fields = {k: v for k, v in json_data.items() if k not in required_fields}
+
+    return {
+        "timestamp": timestamp,
+        "level": level,
+        "service": service,
+        "message": message,
+        **optional_fields,
+    }

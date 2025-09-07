@@ -1,0 +1,192 @@
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime, date
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///events.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+
+class Event(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    date = db.Column(db.String(10), nullable=False)  # format dd-mm-yyyy
+    venue = db.Column(db.String(120), nullable=False)
+    available_tickets = db.Column(db.Integer, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'date': self.date,
+            'venue': self.venue,
+            'available_tickets': self.available_tickets,
+            'price': self.price
+        }
+
+
+def parse_date(date_str):
+    try:
+        return datetime.strptime(date_str, '%d-%m-%Y').date()
+    except ValueError:
+        return None
+
+
+@app.before_first_request
+def create_tables():
+    db.create_all()
+
+
+@app.route('/events', methods=['POST'])
+def create_event():
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'Missing JSON body'}), 400
+
+    required_fields = ['name', 'date', 'venue', 'available_tickets', 'price']
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing_fields)}'}), 400
+
+    # Validate date
+    event_date = parse_date(data['date'])
+    if not event_date:
+        return jsonify({'success': False, 'error': 'Invalid date format, expected dd-mm-yyyy'}), 400
+
+    # Validate available_tickets
+    try:
+        available_tickets = int(data['available_tickets'])
+        if available_tickets < 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({'success': False, 'error': 'available_tickets must be a non-negative integer'}), 400
+
+    # Validate price
+    try:
+        price = float(data['price'])
+        if price < 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({'success': False, 'error': 'price must be a non-negative number'}), 400
+
+    event = Event(
+        name=data['name'],
+        date=data['date'],
+        venue=data['venue'],
+        available_tickets=available_tickets,
+        price=price
+    )
+    db.session.add(event)
+    db.session.commit()
+
+    return jsonify({'success': True, 'data': event.to_dict()}), 201
+
+
+@app.route('/events/purchase', methods=['POST'])
+def purchase_tickets():
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'Missing JSON body'}), 400
+
+    if 'event_id' not in data or 'quantity' not in data:
+        return jsonify({'success': False, 'error': 'Missing event_id or quantity'}), 400
+
+    try:
+        event_id = int(data['event_id'])
+        quantity = int(data['quantity'])
+        if quantity <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({'success': False, 'error': 'event_id and quantity must be positive integers'}), 400
+
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({'success': False, 'error': 'Event not found'}), 404
+
+    if event.available_tickets < quantity:
+        return jsonify({'success': False, 'error': 'Insufficient tickets available'}), 400
+
+    event.available_tickets -= quantity
+    db.session.commit()
+
+    return jsonify({'success': True, 'data': {'event_id': event.id, 'tickets_purchased': quantity}}), 201
+
+
+@app.route('/events', methods=['GET'])
+def get_events():
+    events = Event.query.all()
+
+    # Sort by date
+    def event_date_key(e):
+        d = parse_date(e.date)
+        return d if d else date.min
+
+    events_sorted = sorted(events, key=event_date_key)
+    events_list = [e.to_dict() for e in events_sorted]
+
+    return jsonify({'success': True, 'data': events_list}), 200
+
+
+@app.route('/events/<int:event_id>', methods=['GET'])
+def get_event(event_id):
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({'success': False, 'error': 'Event not found'}), 404
+    return jsonify({'success': True, 'data': event.to_dict()}), 200
+
+
+@app.route('/events/upcoming', methods=['GET'])
+def get_upcoming_events():
+    start_date_str = request.args.get('startDate')
+    end_date_str = request.args.get('endDate')
+
+    today = date.today()
+
+    if start_date_str:
+        start_date = parse_date(start_date_str)
+        if not start_date:
+            return jsonify({'success': False, 'error': 'Invalid startDate format, expected dd-mm-yyyy'}), 400
+    else:
+        start_date = today
+
+    if end_date_str:
+        end_date = parse_date(end_date_str)
+        if not end_date:
+            return jsonify({'success': False, 'error': 'Invalid endDate format, expected dd-mm-yyyy'}), 400
+    else:
+        end_date = date.max
+
+    if start_date > end_date:
+        return jsonify({'success': False, 'error': 'startDate cannot be after endDate'}), 400
+
+    events = Event.query.all()
+
+    filtered_events = []
+    for e in events:
+        e_date = parse_date(e.date)
+        if e_date and start_date <= e_date <= end_date:
+            filtered_events.append(e)
+
+    filtered_events_sorted = sorted(filtered_events, key=lambda e: parse_date(e.date))
+    events_list = [e.to_dict() for e in filtered_events_sorted]
+
+    return jsonify({'success': True, 'data': events_list}), 200
+
+
+@app.route('/events/<int:event_id>', methods=['DELETE'])
+def delete_event(event_id):
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({'success': False, 'error': 'Event not found'}), 404
+
+    db.session.delete(event)
+    db.session.commit()
+
+    return jsonify({'success': True, 'data': f'Event {event_id} deleted'}), 200
+
+
+if __name__ == '__main__':
+    app.run(port=8000)

@@ -39,7 +39,7 @@ def create_event():
         available_tickets = int(data["available_tickets"])
         price = float(data["price"])
     except (ValueError, TypeError):
-        return error_response("Invalid data type for available_tickets or price", 400)
+        return error_response("available_tickets must be integer and price must be float", 400)
 
     event = Event(
         name=data["name"],
@@ -48,12 +48,13 @@ def create_event():
         available_tickets=available_tickets,
         price=price
     )
+
     try:
         db.session.add(event)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return error_response("Database error", 500)
+        return error_response("Database error: " + str(e), 500)
 
     return jsonify(event.to_dict()), 201
 
@@ -70,30 +71,31 @@ def purchase_tickets():
     try:
         event_id = int(data["event_id"])
         quantity = int(data["quantity"])
+        if quantity <= 0:
+            return error_response("Quantity must be positive integer", 400)
     except (ValueError, TypeError):
-        return error_response("Invalid data type for event_id or quantity", 400)
+        return error_response("event_id and quantity must be integers", 400)
 
-    event = Event.query.get(event_id)
+    event = db.session.get(Event, event_id)
     if not event:
         return error_response("Event not found", 404)
-
-    if quantity <= 0:
-        return error_response("Quantity must be positive", 400)
 
     if event.available_tickets < quantity:
         return error_response("Not enough tickets available", 400)
 
     event.available_tickets -= quantity
-
     try:
         db.session.commit()
-    except Exception:
+    except Exception as e:
         db.session.rollback()
-        return error_response("Database error", 500)
+        return error_response("Database error: " + str(e), 500)
 
-    event_dict = event.to_dict()
-    # Fix 1: Ensure available_tickets key is included (already included in to_dict)
-    return jsonify(event_dict), 201
+    total_amount = quantity * event.price
+    return jsonify({
+        "message": "Purchase successful",
+        "total_amount": total_amount,
+        "remaining_tickets": event.available_tickets
+    }), 201
 
 
 @event_blueprint.route("", methods=["GET"])
@@ -105,7 +107,7 @@ def get_all_events():
 
 @event_blueprint.route("/<int:event_id>", methods=["GET"])
 def get_event(event_id):
-    event = Event.query.get(event_id)
+    event = db.session.get(Event, event_id)
     if not event:
         return error_response("Event not found", 404)
     return jsonify(event.to_dict()), 200
@@ -116,30 +118,26 @@ def get_upcoming_events():
     start_date_str = request.args.get("startDate")
     end_date_str = request.args.get("endDate")
 
-    start_date = None
-    end_date = None
+    utc_now = datetime.now(timezone.utc).date()
 
     if start_date_str:
         start_date = parse_date(start_date_str)
         if not start_date:
-            # Fix 2: Generalized error message
-            return error_response("Invalid date format. Use dd-mm-yyyy", 400)
+            return error_response("Invalid startDate format. Use dd-mm-yyyy", 400)
+    else:
+        start_date = utc_now
 
     if end_date_str:
         end_date = parse_date(end_date_str)
         if not end_date:
-            # Fix 2: Generalized error message
-            return error_response("Invalid date format. Use dd-mm-yyyy", 400)
+            return error_response("Invalid endDate format. Use dd-mm-yyyy", 400)
+    else:
+        end_date = None
 
-    if start_date and end_date:
-        if start_date > end_date:
-            # Fix 3: Correct error message
-            return error_response("Start date cannot be after end date", 400)
+    if end_date and start_date > end_date:
+        return error_response("startDate must be less than or equal to endDate", 400)
 
-    query = Event.query
-
-    if start_date:
-        query = query.filter(Event.date >= start_date)
+    query = Event.query.filter(Event.date >= start_date)
     if end_date:
         query = query.filter(Event.date <= end_date)
 
@@ -150,15 +148,15 @@ def get_upcoming_events():
 
 @event_blueprint.route("/<int:event_id>", methods=["DELETE"])
 def delete_event(event_id):
-    event = Event.query.get(event_id)
+    event = db.session.get(Event, event_id)
     if not event:
         return error_response("Event not found", 404)
 
     try:
         db.session.delete(event)
         db.session.commit()
-    except Exception:
+    except Exception as e:
         db.session.rollback()
-        return error_response("Database error", 500)
+        return error_response("Database error: " + str(e), 500)
 
-    return jsonify({"message": "Event deleted successfully"}), 200
+    return jsonify({"message": "Event deleted"}), 200

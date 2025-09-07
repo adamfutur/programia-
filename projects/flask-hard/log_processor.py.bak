@@ -1,0 +1,147 @@
+import threading
+import queue
+import time
+from datetime import datetime, timedelta
+
+class LogProcessor:
+    def __init__(self):
+        # Queues for each log level
+        self.queues = {
+            'CRITICAL': queue.Queue(),
+            'WARNING': queue.Queue(),
+            'INFO': queue.Queue()
+        }
+
+        # Storage for logs: list of dicts
+        self.logs_storage = []
+        self.logs_lock = threading.Lock()  # To protect logs_storage
+
+        # Metrics
+        self.metrics = {
+            'total_logs_processed': 0,
+            'notifications_sent': 0
+        }
+        self.metrics_lock = threading.Lock()
+
+        # Notification cooldowns: dict keyed by (service, level, request_id)
+        # Stores datetime of last notification sent
+        self.notification_cooldowns = {}
+        self.cooldown_period = timedelta(seconds=60)  # 60 seconds cooldown
+        self.cooldown_lock = threading.Lock()
+
+        # Consumer threads
+        self.consumer_threads = []
+        self._stop_event = threading.Event()
+
+        # Start consumer threads
+        for level in self.queues.keys():
+            t = threading.Thread(target=self._consumer_worker, args=(level,), daemon=True)
+            t.start()
+            self.consumer_threads.append(t)
+
+    def process_log(self, log_entry):
+        """
+        Validate and enqueue the log entry into the appropriate queue.
+        """
+        # Validate log_entry fields
+        required_fields = ['timestamp', 'level', 'service', 'message', 'request_id']
+        for field in required_fields:
+            if field not in log_entry:
+                raise ValueError(f'Missing field {field} in log entry')
+
+        level = log_entry['level']
+        if level not in self.queues:
+            raise ValueError(f'Invalid log level: {level}')
+
+        # Parse timestamp
+        try:
+            timestamp = datetime.fromisoformat(log_entry['timestamp'])
+        except Exception:
+            raise ValueError('Invalid timestamp format. Use ISO 8601 format.')
+
+        # Normalize log entry with parsed timestamp
+        normalized_log = {
+            'timestamp': timestamp,
+            'level': level,
+            'service': log_entry['service'],
+            'message': log_entry['message'],
+            'request_id': log_entry['request_id']
+        }
+
+        # Enqueue
+        self.queues[level].put(normalized_log)
+
+    def _consumer_worker(self, level):
+        """
+        Worker thread that consumes logs from the queue for a given level,
+        processes them (store and send notifications respecting cooldown).
+        """
+        while not self._stop_event.is_set():
+            try:
+                log_entry = self.queues[level].get(timeout=1)  # wait 1 sec
+            except queue.Empty:
+                continue
+
+            # Store log
+            with self.logs_lock:
+                self.logs_storage.append(log_entry)
+
+            # Update metrics
+            with self.metrics_lock:
+                self.metrics['total_logs_processed'] += 1
+
+            # Send notification if cooldown allows
+            if self._can_send_notification(log_entry):
+                self._send_notification(log_entry)
+
+            self.queues[level].task_done()
+
+    def _can_send_notification(self, log_entry):
+        key = (log_entry['service'], log_entry['level'], log_entry['request_id'])
+        now = datetime.utcnow()
+
+        with self.cooldown_lock:
+            last_sent = self.notification_cooldowns.get(key)
+            if last_sent is None or (now - last_sent) > self.cooldown_period:
+                # Update last sent time
+                self.notification_cooldowns[key] = now
+                return True
+            else:
+                return False
+
+    def _send_notification(self, log_entry):
+        # Placeholder for sending notification logic
+        # For example, send email, push notification, etc.
+        # Here we just simulate by printing
+        print(f"Notification sent for {log_entry['level']} log from {log_entry['service']} (request_id: {log_entry['request_id']})")
+
+        with self.metrics_lock:
+            self.metrics['notifications_sent'] += 1
+
+    def get_logs(self, level_filter=None):
+        with self.logs_lock:
+            filtered_logs = self.logs_storage.copy()
+
+        if level_filter:
+            filtered_logs = [log for log in filtered_logs if log['level'] == level_filter]
+
+        # Sort by timestamp ascending
+        filtered_logs.sort(key=lambda x: x['timestamp'])
+
+        # Convert datetime to ISO string for JSON serialization
+        result = []
+        for log in filtered_logs:
+            log_copy = log.copy()
+            log_copy['timestamp'] = log_copy['timestamp'].isoformat()
+            result.append(log_copy)
+
+        return result
+
+    def get_metrics(self):
+        with self.metrics_lock:
+            return self.metrics.copy()
+
+    def stop(self):
+        self._stop_event.set()
+        for t in self.consumer_threads:
+            t.join()

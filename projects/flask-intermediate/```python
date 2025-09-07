@@ -1,0 +1,31 @@
+# projects/flask-intermediate/app/__init__.py
+
+from flask import Flask, jsonify
+from app.config import Config
+from app.models import db
+from app.views import bp as auth_bp
+from flask_jwt_extended import JWTManager
+
+
+def create_app():
+    app = Flask(__name__)
+    app.config.from_object(Config)
+
+    db.init_app(app)
+    jwt = JWTManager(app)
+
+    app.register_blueprint(auth_bp)
+
+    @jwt.unauthorized_loader
+    def missing_token_callback(callback):
+        return jsonify({"msg": "Missing Authorization Header"}), 401
+
+    @jwt.invalid_token_loader
+    def invalid_token_callback(callback):
+        return jsonify({"detail": "Invalid username or password."}), 401
+
+    @jwt.expired_token_loader
+    def expired_token_callback(jwt_header, jwt_payload):
+        return jsonify({"detail": "Invalid username or password."}), 401
+
+    return app

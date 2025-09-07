@@ -44,47 +44,54 @@ class LogProcessor:
         while not self._stop_event.is_set():
             try:
                 log_entry = q.get(timeout=1)
+                self.process_log(log_entry)
+                q.task_done()
             except queue.Empty:
                 continue
 
-            # Store the log
-            with self.logs_lock:
-                self.logs.append(log_entry)
-
-            # Send notification if needed
-            if level in ('CRITICAL', 'WARNING'):
-                notified = self.notification_manager.send_notification(log_entry)
-                if notified:
-                    with self.metrics_lock:
-                        self.metrics['notifications_sent'] += 1
-
-            # Update logs_processed metric
-            with self.metrics_lock:
-                self.metrics['logs_processed'] += 1
-
-            q.task_done()
-
     def enqueue_log(self, log_entry):
-        level = log_entry.get('level')
-        if level not in self.queues:
-            # For levels not in queues, put into INFO queue as fallback
-            self.queues['INFO'].put(log_entry)
-        else:
+        # Determine queue based on log level priority
+        level = log_entry.get('level', '').upper()
+        if level in self.queues:
             self.queues[level].put(log_entry)
+        else:
+            # If level not in priority queues, put in INFO queue as fallback
+            self.queues['INFO'].put(log_entry)
 
-    def get_logs(self, level=None):
+    def process_log(self, log_entry):
+        # Store the log
         with self.logs_lock:
-            if level:
-                filtered = [log for log in self.logs if log.get('level') == level]
-            else:
-                filtered = list(self.logs)
+            self.logs.append(log_entry)
 
-        # Sort by timestamp ascending
-        filtered.sort(key=lambda x: x.get('timestamp'))
-        return filtered
+        # Increment logs_processed metric
+        with self.metrics_lock:
+            self.metrics['logs_processed'] += 1
+
+        # Send notification if needed
+        notified = self.notification_manager.send_notification(log_entry)
+        if notified:
+            with self.metrics_lock:
+                self.metrics['notifications_sent'] += 1
+
+    def get_logs(self, level=None, sort_asc=True):
+        with self.logs_lock:
+            filtered_logs = self.logs
+            if level:
+                level = level.upper()
+                filtered_logs = [log for log in self.logs if log.get('level', '').upper() == level]
+
+            # Sort by timestamp
+            try:
+                filtered_logs.sort(key=lambda x: x.get('timestamp'), reverse=not sort_asc)
+            except Exception:
+                # If timestamp missing or invalid, skip sorting
+                pass
+
+            return filtered_logs
 
     def get_metrics(self):
         with self.metrics_lock:
+            # Return a copy to avoid race conditions
             return dict(self.metrics)
 
     def stop(self):

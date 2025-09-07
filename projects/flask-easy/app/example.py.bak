@@ -1,0 +1,93 @@
+from flask import Flask, request, jsonify, abort
+from datetime import datetime
+
+app = Flask(__name__)
+
+# In-memory storage for events
+EVENTS = {}
+NEXT_ID = 1
+
+@app.route('/events', methods=['POST'])
+def create_event():
+    global NEXT_ID
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Invalid JSON'}), 400
+
+    name = data.get('name')
+    date_str = data.get('date')
+    tickets = data.get('tickets')
+
+    if not name or not date_str or tickets is None:
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    try:
+        date = datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format, expected YYYY-MM-DD'}), 400
+
+    event = {
+        'id': NEXT_ID,
+        'name': name,
+        'date': date_str,
+        'tickets': tickets
+    }
+    EVENTS[NEXT_ID] = event
+    NEXT_ID += 1
+
+    return jsonify(event), 201
+
+@app.route('/events', methods=['GET'])
+def get_all_events():
+    return jsonify(list(EVENTS.values())), 200
+
+@app.route('/events/<int:event_id>', methods=['GET'])
+def get_event_by_id(event_id):
+    event = EVENTS.get(event_id)
+    if not event:
+        return jsonify({'error': 'Event not found'}), 404
+    return jsonify(event), 200
+
+@app.route('/events/<int:event_id>/purchase', methods=['POST'])
+def purchase_tickets(event_id):
+    event = EVENTS.get(event_id)
+    if not event:
+        return jsonify({'error': 'Event not found'}), 404
+
+    data = request.get_json()
+    if not data or 'quantity' not in data:
+        return jsonify({'error': 'Missing quantity'}), 400
+
+    quantity = data['quantity']
+    if not isinstance(quantity, int) or quantity <= 0:
+        return jsonify({'error': 'Quantity must be a positive integer'}), 400
+
+    if event['tickets'] < quantity:
+        return jsonify({'error': 'Insufficient tickets available'}), 400
+
+    event['tickets'] -= quantity
+    return jsonify({'message': f'{quantity} tickets purchased successfully'}), 200
+
+@app.route('/events/<int:event_id>', methods=['DELETE'])
+def delete_event(event_id):
+    if event_id not in EVENTS:
+        return jsonify({'error': 'Event not found'}), 404
+    del EVENTS[event_id]
+    return jsonify({'message': 'Event deleted'}), 200
+
+@app.route('/events/upcoming', methods=['GET'])
+def get_upcoming_events():
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify({'error': 'Missing date query parameter'}), 400
+
+    try:
+        query_date = datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format, expected YYYY-MM-DD'}), 400
+
+    upcoming = [event for event in EVENTS.values() if datetime.strptime(event['date'], '%Y-%m-%d') >= query_date]
+    return jsonify(upcoming), 200
+
+if __name__ == '__main__':
+    app.run(debug=True)

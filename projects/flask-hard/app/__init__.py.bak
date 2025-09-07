@@ -11,14 +11,11 @@ def create_app(config_name="default"):
 
     # Register shutdown handler to stop consumer threads
     @app.teardown_appcontext
-    def shutdown(exception=None):
+def shutdown(exception=None):
         # Stop consumer threads gracefully
         try:
             from app.views import log_processor
-            log_processor._stop_event.set()
-            # Optionally join threads if needed
-            for t in log_processor.consumer_threads:
-                t.join(timeout=1)
+            log_processor.stop()
         except Exception:
             pass
 

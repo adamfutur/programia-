@@ -31,33 +31,26 @@ def register_user():
 @user_blueprint.route('/token/', methods=['POST'])
 def login():
     """Authenticate user and return access and refresh tokens."""
-    data = request.json
-    username = data.get('username')
-    password = data.get('password')
+    data = request.get_json()
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({"detail": "Invalid username or password"}), 401
 
-    if not username or not password:
-        return jsonify({"detail": "Username and password required"}), 400
+    username = data['username']
+    password = data['password']
 
     user = CustomUser.query.filter_by(username=username).first()
-
-    if user and user.check_password(password):
-        # IMPORTANT FIX: Convert user.id to string when creating tokens
-        access_token = create_access_token(identity=str(user.id))
-        refresh_token = create_refresh_token(identity=str(user.id))
-        return jsonify({
-            'access': access_token,
-            'refresh': refresh_token
-        }), 200
-    else:
+    if not user or not user.check_password(password):
         return jsonify({"detail": "Invalid username or password"}), 401
+
+    access_token = create_access_token(identity=user.id)
+    refresh_token = create_refresh_token(identity=user.id)
+
+    return jsonify({"access": access_token, "refresh": refresh_token}), 200
 
 @user_blueprint.route('/list/', methods=['GET'])
 @jwt_required()
 def list_users():
-    """Return list of users, requires valid JWT token."""
-    current_user_id = get_jwt_identity()
-    # current_user_id is a string as per token creation fix
-
+    """Return list of all users, requires valid JWT access token."""
     users = CustomUser.query.all()
-    users_data = [{'id': u.id, 'username': u.username} for u in users]
+    users_data = [{"id": u.id, "username": u.username} for u in users]
     return jsonify(users_data), 200

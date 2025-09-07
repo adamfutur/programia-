@@ -1,0 +1,69 @@
+import threading
+import queue
+from flask import Flask, request, jsonify, abort
+
+app = Flask(__name__)
+
+class LogProcessor:
+    def __init__(self):
+        self.queues = {
+            "CRITICAL": queue.Queue(),
+            "WARNING": queue.Queue(),
+            "INFO": queue.Queue()
+        }
+        self.consumer_threads = []
+        self._stop_event = threading.Event()
+
+        for level in self.queues:
+            t = threading.Thread(target=self.consumer, args=(self.queues[level],), daemon=True)
+            t.start()
+            self.consumer_threads.append(t)
+
+    def consumer(self, q):
+        while not self._stop_event.is_set():
+            try:
+                log = q.get(timeout=0.5)
+                # Process the log here (e.g., save to DB, notify, etc.)
+                # For example, just print it
+                print(f"Processed log: {log}")
+                q.task_done()
+            except queue.Empty:
+                continue
+
+    def process_log(self, log):
+        level = log.get('level')
+        if level not in self.queues:
+            # Optionally handle unknown levels
+            level = "INFO"
+        self.queues[level].put(log)
+
+    def stop(self):
+        self._stop_event.set()
+        for t in self.consumer_threads:
+            t.join()
+
+log_processor = LogProcessor()
+
+@app.route('/logs', methods=['POST'])
+def add_log():
+    log = request.get_json()
+    if not log:
+        return jsonify({"error": "Invalid log data"}), 400
+    # Validate log content
+    if 'level' not in log or 'message' not in log:
+        return jsonify({"error": "Missing 'level' or 'message' in log"}), 400
+
+    log_processor.process_log(log)
+    return jsonify({"message": "Log added"}), 201
+
+@app.route('/logs', methods=['GET'])
+def get_logs():
+    level = request.args.get('level')
+    valid_levels = ['CRITICAL', 'WARNING', 'INFO']
+    if level and level not in valid_levels:
+        return jsonify({"error": "Invalid log level filter"}), 400
+
+    # For demonstration, return empty list or dummy logs
+    # In real app, would query logs storage
+    logs = []
+    return jsonify({"logs": logs}), 200
